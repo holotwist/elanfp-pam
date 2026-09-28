@@ -17,7 +17,8 @@ int matcher_init(const char *model_path) {
     if (g_ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "elan_matcher", &g_env) != NULL) return -1;
     if (g_ort->CreateSessionOptions(&g_opts) != NULL) return -1;
 
-    g_ort->SetIntraOpNumThreads(g_opts, 2);
+    OrtStatus *st = g_ort->SetIntraOpNumThreads(g_opts, 2);
+    if (st != NULL) g_ort->ReleaseStatus(st);
 
     if (g_ort->CreateSession(g_env, model_path, g_opts, &g_session) != NULL) return -1;
     if (g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &g_mem_info) != NULL) return -1;
@@ -64,7 +65,13 @@ int matcher_extract(const uint8_t *img_79x79, float *out_embedding) {
     }
 
     float *emb_data = NULL;
-    g_ort->GetTensorMutableData(output_tensor, (void **)&emb_data);
+    st = g_ort->GetTensorMutableData(output_tensor, (void **)&emb_data);
+    if (st != NULL) {
+        g_ort->ReleaseStatus(st);
+        g_ort->ReleaseValue(output_tensor);
+        g_ort->ReleaseValue(input_tensor);
+        return -1;
+    }
     memcpy(out_embedding, emb_data, EMBEDDING_DIM * sizeof(float));
 
     g_ort->ReleaseValue(output_tensor);

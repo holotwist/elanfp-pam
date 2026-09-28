@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "elan_drv.h"
 #include "image.h"
 #include "matcher.h"
@@ -23,6 +24,7 @@ static int load_background(const char *path, uint16_t *bg_buf) {
 }
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv) {
+    (void)flags;
     const char *username = NULL;
     if (pam_get_user(pamh, &username, NULL) != PAM_SUCCESS || !username || !*username) {
         return PAM_USER_UNKNOWN;
