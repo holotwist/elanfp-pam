@@ -18,7 +18,7 @@ int matcher_init(const char *model_path) {
     if (g_ort->CreateSessionOptions(&g_opts) != NULL) return -1;
 
     OrtStatus *st = g_ort->SetIntraOpNumThreads(g_opts, 2);
-    if (st != NULL) g_ort->ReleaseStatus(st);
+    if (st) g_ort->ReleaseStatus(st);
 
     if (g_ort->CreateSession(g_env, model_path, g_opts, &g_session) != NULL) return -1;
     if (g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &g_mem_info) != NULL) return -1;
@@ -72,8 +72,8 @@ int matcher_extract(const uint8_t *img_79x79, float *out_embedding) {
         g_ort->ReleaseValue(input_tensor);
         return -1;
     }
-    memcpy(out_embedding, emb_data, EMBEDDING_DIM * sizeof(float));
 
+    memcpy(out_embedding, emb_data, EMBEDDING_DIM * sizeof(float));
     g_ort->ReleaseValue(output_tensor);
     g_ort->ReleaseValue(input_tensor);
     return 0;
@@ -96,7 +96,9 @@ MatchResult matcher_verify(const float *probe_emb, const FingerprintProfile *pro
             dot += probe_emb[d] * profile->embeddings[i][d];
         }
 
-        if (dot >= THRESHOLD_CONSENSUS) res.consensus_count++;
+        if (dot >= THRESHOLD_CONSENSUS) {
+            res.consensus_count++;
+        }
 
         if (dot > res.best_score) {
             res.second_score = res.best_score;
@@ -114,10 +116,10 @@ MatchResult matcher_verify(const float *probe_emb, const FingerprintProfile *pro
         res.reason = "Consensus match";
     } else if (res.best_score >= THRESHOLD_AMBIGUOUS) {
         res.granted = 0;
-        res.reason = "Inconclusive consensus";
+        res.reason = "Rejected";
     } else {
         res.granted = 0;
-        res.reason = "Low similarity score";
+        res.reason = "Fingerprint not recognized";
     }
 
     return res;

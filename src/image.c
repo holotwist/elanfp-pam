@@ -29,7 +29,7 @@ uint8_t *image_process(const uint16_t *raw_pixels, int width, int height, int st
     }
     if (max <= min) max = min + 1;
 
-    // Normalize and rotate 90 degrees CCW
+    // Normalize to 8-bit and rotate 90 degrees CCW
     int out_w = height;
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -43,7 +43,6 @@ uint8_t *image_process(const uint16_t *raw_pixels, int width, int height, int st
             img[dest_x + dest_y * out_w] = px;
         }
     }
-
     return img;
 }
 

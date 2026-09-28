@@ -20,7 +20,7 @@ static int load_background(const char *path, uint16_t *bg_buf) {
     if (!f) return -1;
     size_t r = fread(bg_buf, sizeof(uint16_t), 80 * 80, f);
     fclose(f);
-    return (r == 80 * 80) ? 0 : -1;
+    return (r > 0) ? 0 : -1;
 }
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv) {
@@ -50,18 +50,21 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
         return PAM_AUTHINFO_UNAVAIL;
     }
 
-    if (matcher_init(model_path) < 0) {
-        pam_syslog(pamh, 3, "pam_elanfp: Model init error (%s)", model_path);
+    uint16_t bg_buf[80 * 80];
+    if (load_background(calib_path, bg_buf) != 0) {
+        pam_syslog(pamh, 3, "pam_elanfp: Calibration baseline missing (%s)", calib_path);
         return PAM_AUTHINFO_UNAVAIL;
     }
 
-    uint16_t bg_buf[80 * 80];
-    int has_bg = (load_background(calib_path, bg_buf) == 0);
+    if (matcher_init(model_path) < 0) {
+        pam_syslog(pamh, 3, "pam_elanfp: Failed to load ONNX model (%s)", model_path);
+        return PAM_AUTHINFO_UNAVAIL;
+    }
 
     int auth_status = PAM_AUTH_ERR;
 
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        pam_info(pamh, "Place finger on reader (Attempt %d/%d)...", attempt, MAX_ATTEMPTS);
+        pam_info(pamh, "Touch fingerprint sensor (%d/%d).", attempt, MAX_ATTEMPTS);
 
         ElanDevice dev = {0};
         for (int retry = 0; retry < 3; retry++) {
@@ -74,11 +77,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
             break;
         }
 
-        if (has_bg) {
-            dev.background = malloc(dev.stride * dev.height * sizeof(uint16_t));
-            if (dev.background) {
-                memcpy(dev.background, bg_buf, dev.stride * dev.height * sizeof(uint16_t));
-            }
+        dev.background = malloc(dev.stride * dev.height * sizeof(uint16_t));
+        if (dev.background) {
+            memcpy(dev.background, bg_buf, dev.stride * dev.height * sizeof(uint16_t));
         }
 
         int wait_res = elan_wait_finger_timeout(&dev, timeout_ms);
@@ -91,8 +92,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
         uint16_t raw_buf[32768];
         int cap_res = elan_capture(&dev, raw_buf);
         int w = dev.width, h = dev.height, stride = dev.stride;
-
-        // Release sensor immediately after capture
         elan_close(&dev);
 
         if (cap_res < 0) {
@@ -117,6 +116,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 
         MatchResult res = matcher_verify(probe_emb, &profile);
         if (res.granted) {
+            pam_info(pamh, "Fingerprint recognized (%s, score: %.2f)", res.reason, res.best_score);
             auth_status = PAM_SUCCESS;
             break;
         }
@@ -128,11 +128,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
     }
 
     matcher_cleanup();
-
-    if (auth_status != PAM_SUCCESS && auth_status != PAM_AUTHINFO_UNAVAIL) {
-        pam_error(pamh, "Authentication failed.");
-    }
-
     return auth_status;
 }
 
