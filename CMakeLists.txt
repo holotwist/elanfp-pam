@@ -27,11 +27,11 @@ endif()
 # Dependencies
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-find_library(PAM_LIB pam REQUIRED)
+pkg_check_modules(SYSTEMD REQUIRED libsystemd)
 find_library(MATH_LIB m REQUIRED)
+find_package(Threads REQUIRED)
 
 # ONNX Runtime detection
-# local ./onnx first, then system
 find_path(ONNX_INCLUDE_DIR onnxruntime_c_api.h PATHS ${CMAKE_CURRENT_SOURCE_DIR}/onnx/include /usr/include /usr/local/include)
 find_library(ONNX_LIB onnxruntime PATHS ${CMAKE_CURRENT_SOURCE_DIR}/onnx/lib /usr/lib /usr/local/lib /usr/lib/elanfp)
 
@@ -39,39 +39,31 @@ if(NOT ONNX_INCLUDE_DIR OR NOT ONNX_LIB)
     message(FATAL_ERROR "ONNX Runtime not found. Place headers in ./onnx/include and libs in ./onnx/lib or install system-wide.")
 endif()
 
-include_directories(src ${LIBUSB_INCLUDE_DIRS} ${ONNX_INCLUDE_DIR})
+include_directories(src ${LIBUSB_INCLUDE_DIRS} ${SYSTEMD_INCLUDE_DIRS} ${ONNX_INCLUDE_DIR})
 
-# Shared core logic
-add_library(elan_core OBJECT
+add_executable(elanfpd
+    src/elanfpd.c
+    src/device.c
+    src/storage.c
     src/elan_drv.c
     src/image.c
     src/matcher.c
+    src/quality.c
+    src/enroll_policy.c
 )
-set_target_properties(elan_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-set(COMMON_LIBS ${LIBUSB_LIBRARIES} ${ONNX_LIB} ${MATH_LIB})
+target_link_libraries(elanfpd PRIVATE
+    ${LIBUSB_LIBRARIES}
+    ${SYSTEMD_LIBRARIES}
+    ${ONNX_LIB}
+    ${MATH_LIB}
+    Threads::Threads
+)
 
-# Enroller executable
-add_executable(elanfp-enroll src/enroll.c $<TARGET_OBJECTS:elan_core>)
-target_link_libraries(elanfp-enroll PRIVATE ${COMMON_LIBS})
-set_target_properties(elanfp-enroll PROPERTIES BUILD_RPATH "\$ORIGIN/../lib/elanfp;/usr/lib/elanfp")
-
-# Verification executable
-add_executable(elanfp-verify src/verify.c $<TARGET_OBJECTS:elan_core>)
-target_link_libraries(elanfp-verify PRIVATE ${COMMON_LIBS})
-set_target_properties(elanfp-verify PROPERTIES BUILD_RPATH "\$ORIGIN/../lib/elanfp;/usr/lib/elanfp")
-
-# PAM module (.so)
-add_library(pam_elanfp SHARED src/pam_elanfp.c $<TARGET_OBJECTS:elan_core>)
-target_link_libraries(pam_elanfp PRIVATE ${COMMON_LIBS} ${PAM_LIB})
-set_target_properties(pam_elanfp PROPERTIES
-    PREFIX ""
-    OUTPUT_NAME "pam_elanfp"
-    BUILD_RPATH "/usr/lib/elanfp"
+set_target_properties(elanfpd PROPERTIES
+    BUILD_RPATH "\$ORIGIN/../lib/elanfp;/usr/lib/elanfp"
     INSTALL_RPATH "/usr/lib/elanfp"
 )
 
-# Install rules
 include(GNUInstallDirs)
-install(TARGETS elanfp-enroll elanfp-verify RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(TARGETS pam_elanfp LIBRARY DESTINATION /usr/lib/security)
+install(TARGETS elanfpd RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

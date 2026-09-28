@@ -10,12 +10,15 @@ INSTALL=0
 CLEAN=0
 CMAKE_FLAGS=()
 
+UNINSTALL=0
+
 print_help() {
     cat << EOF
 Usage: ./build.sh [OPTIONS] [-- <additional cmake flags>]
 
 Options:
-  -i,  --install              Build and install executables, PAM module, and model
+  -i,  --install              Build and install daemon, service, and model
+  -u,  --uninstall            Stop service, remove all installed files, and restore fprintd
   -m,  --modern               Build for modern x86_64 (x86-64-v3) instead of generic x86-64
   -l,  --level <level>        Specify x86_64 level when modern is used (x86-64-v2, x86-64-v3, x86-64-v4)
   -c,  --clean                Wipe the build directory before configuring
@@ -24,9 +27,9 @@ Options:
   -h,  --help                 Show this help message
 
 Examples:
-  ./build.sh                         Build binaries and PAM module (-O3, native tuning)
+  ./build.sh                         Build daemon (-O3, native tuning)
   sudo ./build.sh -i                 Build and install system-wide
-  ./build.sh -m                      Build targeting x86-64-v3
+  sudo ./build.sh -u                 Uninstall and clean system
   ./build.sh -c -r                   Clean wipe and rebuild in Release mode
 EOF
 }
@@ -36,6 +39,10 @@ while [[ $# -gt 0 ]]; do
         -i|--install)
             INSTALL=1
             BUILD_TYPE="Release"
+            shift
+            ;;
+        -u|--uninstall)
+            UNINSTALL=1
             shift
             ;;
         -m|--modern)
@@ -74,6 +81,34 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ "$UNINSTALL" -eq 1 ]; then
+    echo "==> Uninstalling elanfp..."
+    if [ "$(id -u)" -ne 0 ]; then
+        echo -e "\033[1;31m[!] Error: Uninstall requires root privileges. Run with sudo.\033[0m"
+        exit 1
+    fi
+
+    # Stop and disable service
+    if systemctl is-active --quiet elanfpd.service 2>/dev/null; then
+        systemctl stop elanfpd.service
+    fi
+    systemctl disable elanfpd.service 2>/dev/null || true
+    systemctl unmask fprintd.service 2>/dev/null || true
+
+    # Remove installed binaries and services
+    rm -f /usr/bin/elanfpd
+    rm -f /usr/bin/elanfp-enroll /usr/bin/elanfp-verify
+    rm -f /usr/lib/security/pam_elanfp.so
+    rm -f /etc/systemd/system/elanfpd.service
+    rm -f /etc/dbus-1/system.d/net.reactivated.Fprint.conf
+    rm -rf /usr/share/elanfp
+    rm -rf /usr/lib/elanfp
+
+    systemctl daemon-reload
+    echo -e "\033[1;32m==> Uninstall complete.\033[0m"
+    exit 0
+fi
 
 if [ "$CLEAN" -eq 1 ] && [ -d "$BUILD_DIR" ]; then
     echo "==> Cleaning build directory..."
@@ -151,20 +186,25 @@ if [ "$INSTALL" -eq 1 ]; then
 
     # Create target directories
     install -d -m 755 /usr/bin
-    install -d -m 755 /usr/lib/security
     install -d -m 755 /usr/lib/elanfp
     install -d -m 755 /usr/share/elanfp
-    install -d -m 700 /var/lib/elanfp/templates
+    install -d -m 755 /etc/dbus-1/system.d
+    install -d -m 755 /etc/systemd/system
+    install -d -m 700 /var/lib/fprint
 
-    # Install executables and PAM module
-    install -m 755 "${BUILD_DIR}/elanfp-enroll" /usr/bin/
-    install -m 755 "${BUILD_DIR}/elanfp-verify" /usr/bin/
-    install -m 755 "${BUILD_DIR}/pam_elanfp.so" /usr/lib/security/
+    # Install binary
+    install -m 755 "${BUILD_DIR}/elanfpd" /usr/bin/
 
     # Strip symbols if release build
     if [ "$BUILD_TYPE" = "Release" ] && command -v strip >/dev/null 2>&1; then
-        strip -s /usr/bin/elanfp-enroll /usr/bin/elanfp-verify /usr/lib/security/pam_elanfp.so 2>/dev/null || true
+        strip -s /usr/bin/elanfpd 2>/dev/null || true
     fi
+
+    # Ensure D-Bus security policy is installed in /etc
+    install -m 644 data/net.reactivated.Fprint.conf /etc/dbus-1/system.d/
+
+    # Install systemd service
+    install -m 644 data/elanfpd.service /etc/systemd/system/
 
     # Install local ONNX runtime libraries if present
     if compgen -G "onnx/lib/libonnxruntime.so*" > /dev/null; then

@@ -1,15 +1,16 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge)](./LICENSE)
 
-# elanfp-pam
+# elanfpd
 
-Linux PAM module and user enrollment/verification tools for ELAN (04f3:0903) capacitive fingerprint sensors using a SCNN as matcher
+fprintd replacement daemon for ELAN (04f3:0903) capacitive fingerprint sensors using SCNN embeddings as matcher. Integrates with fprintd-enroll, standard pam_fprintd, and GNOME/KDE desktop settings.
 
 ## Dependencies
 
 - C11 compiler (GCC or Clang)
 - CMake 3.16+
 - `libusb-1.0`
-- `pam` development headers
+- `libsystemd` (sd-bus)
+- `fprintd` and `pam_fprintd` system packages
 - `onnxruntime` C API libraries and headers
 
 ### Package Installation
@@ -17,17 +18,17 @@ Linux PAM module and user enrollment/verification tools for ELAN (04f3:0903) cap
 Debian / Ubuntu / Linux Mint:
 ```bash
 sudo apt update
-sudo apt install build-essential cmake libusb-1.0-0-dev libpam0g-dev
+sudo apt install build-essential cmake libusb-1.0-0-dev libsystemd-dev fprintd libpam-fprintd
 ```
 
 Arch Linux / Manjaro:
 ```bash
-sudo pacman -S base-devel cmake libusb pam
+sudo pacman -S base-devel cmake libusb systemd-libs fprintd
 ```
 
 Fedora / RHEL:
 ```bash
-sudo dnf install gcc cmake libusb1-devel pam-devel
+sudo dnf install gcc cmake libusb1-devel systemd-devel fprintd fprintd-pam
 ```
 
 Note: Ensure ONNX Runtime C headers and libraries are installed system-wide or located under `./onnx/include` and `./onnx/lib`.
@@ -36,35 +37,37 @@ Note: Ensure ONNX Runtime C headers and libraries are installed system-wide or l
 
 ## Compilation & Installation
 
-### Using `build.sh`
+### Build and Install
 
 ```bash
-# Build binaries and PAM module in Release mode
-./build.sh
-
-# Build targeting modern x86-64 (x86-64-v3)
-./build.sh -m
-
-# Build and install to system paths (root)
-sudo ./build.sh -i
-
-# Clean wipe and rebuild
-./build.sh -c -r
-```
-
-### Using CMake Directly
-
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-sudo cmake --install build
+# Clean build and install daemon
+sudo ./build.sh -c -r -i
 ```
 
 The installer places:
-- Binaries (`elanfp-enroll`, `elanfp-verify`) into `/usr/bin/`
-- PAM module (`pam_elanfp.so`) into `/usr/lib/security/`
-- Model file (`model.onnx` / `model.onnx.data`) into `/usr/share/elanfp/`
-- Templates directory at `/var/lib/elanfp/templates/`
+- Daemon binary (`elanfpd`) into `/usr/bin/`
+- Systemd service (`elanfpd.service`) into `/etc/systemd/system/`
+- D-Bus policy (`net.reactivated.Fprint.conf`) into `/usr/share/dbus-1/system.d/`
+- Model file (`model.onnx`) into `/usr/share/elanfp/`
+- Template vault at `/var/lib/fprint/`
+
+### Configure & Enable Service
+
+Enable and start `elanfpd` (it replaces `fprintd.service` automatically):
+
+```bash
+# Reload systemd definitions
+sudo systemctl daemon-reload
+
+# Enable and start elanfpd
+sudo systemctl enable --now elanfpd.service
+```
+
+Verify the daemon is running and bound to the system D-Bus:
+
+```bash
+systemctl status elanfpd.service
+```
 
 ---
 
@@ -106,31 +109,57 @@ python3 train/train.py --export_only best_model.pth --single_file
 
 ### Enroll a Fingerprint
 
-Run enrollment for a target user (requires 8 touches)
+Enroll (defaults to `right-index-finger`, requires 8 touches):
 
 ```bash
-sudo elanfp-enroll <username>
+fprintd-enroll
 ```
 
-Templates are saved to `/var/lib/elanfp/templates/<username>.dat`.
-
-### Test Verification
-
-Test matching directly via CLI without going through PAM:
+Enroll a specific finger:
 
 ```bash
-elanfp-verify <username>
+fprintd-enroll -f left-index-finger
+```
+
+### Verify Fingerprint
+
+Test verification directly via CLI:
+
+```bash
+fprintd-verify
+```
+
+### Manage Enrolled Fingers
+
+```bash
+# List enrolled fingers for current user
+fprintd-list "$USER"
+
+# Delete all enrolled fingers for current user
+fprintd-delete "$USER"
 ```
 
 ### Configure PAM
 
-Add `pam_elanfp.so` to your target PAM service (e.g. `/etc/pam.d/sudo` or `/etc/pam.d/system-auth`):
+Enable fingerprint authentication using your distribution's PAM tooling:
 
-```pam
-auth        sufficient    pam_elanfp.so timeout=4
+**Ubuntu / Debian / Linux Mint:**
+```bash
+sudo pam-auth-update
+# Ensure [*] Fingerprint authentication is checked
 ```
 
-The module allows up to 2 attempts.
+**Fedora / RHEL:**
+```bash
+sudo authselect enable-feature with-fingerprint
+sudo authselect apply-changes
+```
+
+**Arch Linux:**
+Add `pam_fprintd.so` as `sufficient` to `/etc/pam.d/system-auth`:
+```pam
+auth        sufficient    pam_fprintd.so
+```
 
 ---
 

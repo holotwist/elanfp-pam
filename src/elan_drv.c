@@ -10,11 +10,11 @@
 
 static int elan_cmd(ElanDevice *dev, const uint8_t *cmd, uint8_t *res, int res_len, uint8_t ep_in) {
     int transferred = 0;
-    int r = libusb_bulk_transfer(dev->handle, EP_CMD_OUT, (uint8_t *)cmd, 2, &transferred, 1000);
+    int r = libusb_bulk_transfer(dev->handle, EP_CMD_OUT, (uint8_t *)cmd, 2, &transferred, 500);
     if (r < 0) return r;
 
     if (res_len > 0 && res != NULL) {
-        r = libusb_bulk_transfer(dev->handle, ep_in, res, res_len, &transferred, 2000);
+        r = libusb_bulk_transfer(dev->handle, ep_in, res, res_len, &transferred, 80);
     }
     return r;
 }
@@ -38,6 +38,11 @@ int elan_init(ElanDevice *dev) {
         libusb_exit(dev->ctx);
         return -1;
     }
+
+    // Clear halted endpoints from any previously interrupted transfers
+    libusb_clear_halt(dev->handle, EP_CMD_OUT);
+    libusb_clear_halt(dev->handle, EP_CMD_IN);
+    libusb_clear_halt(dev->handle, EP_IMG_IN);
 
     // Initialize sensor power state
     int transferred = 0;
@@ -146,15 +151,50 @@ int elan_capture(ElanDevice *dev, uint16_t *out_buffer) {
     int copy_bytes = (transferred < frame_bytes) ? transferred : frame_bytes;
     memcpy(out_buffer, temp_buf, copy_bytes);
 
+    // Send stop command
+    elan_stop(dev);
+
     if (dev->background) {
         int total = dev->stride * dev->height;
+        uint32_t sum = 0;
         for (int i = 0; i < total; i++) {
             out_buffer[i] = (out_buffer[i] > dev->background[i]) ? (out_buffer[i] - dev->background[i]) : 0;
+            sum += out_buffer[i];
+        }
+        if (sum == 0) {
+            // All pixels darker than baseline, finger was touching during calibration
+            return -2;
         }
     }
     return 0;
 }
 
-void elan_wait_release(void) {
-    usleep(1200000);
+int elan_arm(ElanDevice *dev) {
+    if (!dev || !dev->handle) return -1;
+    uint8_t pwr_cmd[] = {0x40, 0x31};
+    int transferred = 0;
+    return libusb_bulk_transfer(dev->handle, EP_CMD_OUT, pwr_cmd, sizeof(pwr_cmd), &transferred, 500);
+}
+
+int elan_stop(ElanDevice *dev) {
+    if (!dev || !dev->handle) return -1;
+    uint8_t stop_cmd[] = {0x00, 0x0b};
+    int transferred = 0;
+    return libusb_bulk_transfer(dev->handle, EP_CMD_OUT, stop_cmd, sizeof(stop_cmd), &transferred, 500);
+}
+
+int elan_wait_release_timeout(ElanDevice *dev, int timeout_ms) {
+    uint8_t cmd[] = {0x40, 0x3f};
+    uint8_t res[1] = {0};
+    int elapsed = 0;
+
+    while (elapsed < timeout_ms) {
+        int r = elan_cmd(dev, cmd, res, sizeof(res), EP_CMD_IN);
+        if (r < 0 || res[0] != 0x55) {
+            return 0;
+        }
+        usleep(20000);
+        elapsed += 20;
+    }
+    return 0;
 }

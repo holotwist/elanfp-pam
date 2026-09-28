@@ -23,6 +23,8 @@ int elan_calibrate(ElanDevice *dev);
 int elan_wait_finger(ElanDevice *dev);
 int elan_wait_finger_timeout(ElanDevice *dev, int timeout_ms);
 int elan_capture(ElanDevice *dev, uint16_t *out_buffer);
-void elan_wait_release(void);
+int elan_arm(ElanDevice *dev);
+int elan_stop(ElanDevice *dev);
+int elan_wait_release_timeout(ElanDevice *dev, int timeout_ms);
 
 #endif

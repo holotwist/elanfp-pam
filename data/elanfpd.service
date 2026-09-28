@@ -1,0 +1,14 @@
+[Unit]
+Description=ELAN 04f3:0903 Fingerprint Reader Daemon
+Documentation=man:fprintd(1)
+After=dbus.service
+
+[Service]
+Type=dbus
+BusName=net.reactivated.Fprint
+ExecStart=/usr/bin/elanfpd /usr/share/elanfp/model.onnx
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+Alias=fprintd.service
